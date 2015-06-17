@@ -1,1 +1,3 @@
 *.class
+*.sh
+build.xml
