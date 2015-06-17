@@ -1,0 +1,173 @@
+diff -urN src/com/mellowtech/disc/BlockFile.java new/com/mellowtech/disc/BlockFile.java
+--- src/com/mellowtech/disc/BlockFile.java	2013-09-04 13:44:54.831347171 -0600
++++ new/com/mellowtech/disc/BlockFile.java	2013-09-04 13:11:00.388849063 -0600
+@@ -78,11 +78,12 @@
+    */
+   public static final String POINTER_FILE_EXTENSION = ".ptr";
+   
+-  private short[] pointers;
++  private int[] pointers; // czhang 
+   
+ 
+   private int blockSize, currentBlock, numBlocks, maxBlocs;
+-  private short highBlock;
++  //private short highBlock;
++  private int highBlock; // czhang
+   private String fileName;
+   private RandomAccessFile file;
+   //private AbstractCache fileCache;
+@@ -126,7 +127,7 @@
+     this.fileName = fileName;
+     
+     if(create){
+-      this.pointers = new short[256];
++      this.pointers = new int[256]; // czhang
+       blockSize = blockSize;
+       createFile();
+     }
+@@ -230,6 +231,12 @@
+   public int getPhysicalBlockNo(int logicalPos){
+     if(logicalPos < 0 || logicalPos >= numBlocks)
+       return -1;
++/*
++	System.out.print("logicalpos = ");
++	System.out.print(logicalPos);
++	System.out.print(", pointers[x] = ");
++	System.out.print(pointers[logicalPos]);
++*/
+     return pointers[logicalPos];
+   }
+ 
+@@ -352,8 +359,19 @@
+     /*if(fileCache != null){
+       fileCache.put(new Integer(blockNo), b);
+       return;
+-      }*/
++      }*/ try {
++/*
++	System.out.print("BlockNo = ");
++	System.out.print(blockNo);
++	System.out.print("; blockSize = ");
++	System.out.println(blockSize);
++*/
+     file.seek(blockNo * blockSize);
++	} catch (IOException e) {
++		System.out.println(blockNo);
++		System.out.println(blockSize);
++		e.printStackTrace();
++	}
+     file.write(b);
+     writeOps++;
+   }
+@@ -403,7 +421,8 @@
+       
+       if((numBlocks) ==  pointers.length - 1){ //we have to grow the pointers
+ 	System.out.println("growing pointers");
+-	short[] tmp = new short[pointers.length * 2];
++	//short[] tmp = new short[pointers.length * 2]; // czhang
++	int[] tmp = new int[pointers.length * 4];
+ 	System.arraycopy(pointers, 0, tmp, 0, pointers.length);
+ 	pointers = tmp;
+       }
+@@ -440,7 +459,8 @@
+ 	file.setLength(0);
+       }
+       catch(IOException e){System.out.println(e);}
+-      pointers = new short[256];
++      //pointers = new short[256];
++      pointers = new int[256];
+       currentBlock = -1;
+       numBlocks = 0;
+       highBlock = -1;
+@@ -500,15 +520,18 @@
+       //ByteStorage.writeShort(hBlock, 16, (short) (numBlocks - 1));
+ 
+       //Write header:
+-      ByteBuffer bb = ByteBuffer.allocate(18 + (numBlocks * 2));
++      //ByteBuffer bb = ByteBuffer.allocate(18 + (numBlocks * 2));
++      ByteBuffer bb = ByteBuffer.allocate(20 + (numBlocks * 4)); // czhang
+       bb.putInt(numBlocks);
+       bb.putInt(currentBlock);
+       bb.putInt(pointers.length);
+       bb.putInt(blockSize);
+-      bb.putShort((short) (numBlocks -1));
++      //bb.putShort((short) (numBlocks -1)); // czhang
++      bb.putInt((numBlocks -1));
+ 
+       for(i = 0; i < numBlocks; i++){
+-	bb.putShort((short) i);
++		//bb.putShort((short) i);
++		bb.putInt(i); // czhang
+       }
+       bb.flip();
+       raf1.getChannel().write(bb);
+@@ -544,14 +567,17 @@
+   /********************PRIVATE SECTION*****************************************/
+   private void writeHeader() throws IOException{
+     RandomAccessFile raf = new RandomAccessFile(fileName + POINTER_FILE_EXTENSION, "rw");
+-    ByteBuffer bb = ByteBuffer.allocate(18 + (numBlocks * 2));
++    //ByteBuffer bb = ByteBuffer.allocate(18 + (numBlocks * 2));
++    ByteBuffer bb = ByteBuffer.allocate(20 + (numBlocks * 4)); // czhang
+     bb.putInt(numBlocks);
+     bb.putInt(currentBlock);
+     bb.putInt(pointers.length);
+     bb.putInt(blockSize);
+-    bb.putShort(highBlock);
++    //bb.putShort(highBlock);
++    bb.putInt(highBlock);
+     for(int i = 0; i < numBlocks; i++){
+-      bb.putShort((short) pointers[i]);
++      //bb.putShort((short) pointers[i]);
++      bb.putInt(pointers[i]);
+     }
+     bb.flip();
+     raf.getChannel().write(bb);
+@@ -574,18 +600,20 @@
+     bb.flip();
+     numBlocks = bb.getInt();
+     currentBlock = bb.getInt();
+-    pointers = new short[bb.getInt()];
++    //pointers = new short[bb.getInt()]; //czhang
++    pointers = new int[bb.getInt()];
+     blockSize = bb.getInt();
+-    highBlock = bb.getShort();
++    //highBlock = bb.getShort();
++    highBlock = bb.getInt();  // czhang
+     for(int i = 0; i < numBlocks; i++)
+-      pointers[i] = bb.getShort();
++      //pointers[i] = bb.getShort();   // czhang
++      pointers[i] = bb.getInt();
+     
+     raf.close();
+     //open block file:
+     file = new RandomAccessFile(fileName+BLOCK_FILE_EXTENSION, "rw");
+   }
+ 
+-
+   /*********************************INNER CLASSES**************************/
+   class BFIterator implements Iterator{
+     int count = numBlocks;
+diff -urN src/com/mellowtech/disc/SortedBlock.java new/com/mellowtech/disc/SortedBlock.java
+--- src/com/mellowtech/disc/SortedBlock.java	2013-09-04 13:44:54.831347171 -0600
++++ new/com/mellowtech/disc/SortedBlock.java	2013-09-04 13:11:00.388849063 -0600
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2000-2004, Rickard Cöster, Martin Svensson
++ * Copyright (c) 2000-2004, Rickard Cï¿½ster, Martin Svensson
+  * All rights reserved.
+  * 
+  * Redistribution and use in source and binary forms, with or without 
+@@ -508,11 +508,12 @@
+     ByteStorable lastKey;
+     int numWritten = 0;
+  
+-    //snacka med Rickard om den här lösningen:
++    //snacka med Rickard om den hï¿½r lï¿½sningen:
+     while(numWritten < half){
+       lastKey = getLastKey();
+       sb.insertKey(lastKey);
+       deleteKey(lastKey);
++      //high--;   // czhang reduce the high number
+       numWritten += lastKey.byteSize();
+     }
+     //finally copy the reserved space:

@@ -1,0 +1,1051 @@
+diff -urN org-0.3/src/de/lmu/ifi/dbs/elki/index/ExternalSort.java de/lmu/ifi/dbs/elki/index/ExternalSort.java
+--- org-0.3/src/de/lmu/ifi/dbs/elki/index/ExternalSort.java	1969-12-31 19:00:00.000000000 -0500
++++ de/lmu/ifi/dbs/elki/index/ExternalSort.java	2012-04-12 20:57:09.041556361 -0400
+@@ -0,0 +1,362 @@
++// filename: ExternalSort.java
++package de.lmu.ifi.dbs.elki.index;
++import java.lang.Runtime;
++import java.lang.Process;
++import java.util.*;
++import java.io.*;
++
++/**
++* Goal: offer a generic external-memory sorting program in Java.
++* 
++* It must be : 
++*  - hackable (easy to adapt)
++*  - scalable to large files
++*  - sensibly efficient.
++*
++* This software is in the public domain.
++*
++* By Daniel Lemire, April 2010
++* http://www.daniel-lemire.com/
++*
++* Modified version based on the original version. CZ & JEFF
++*
++*/
++public class ExternalSort {
++	public static final int bufferSize = 8 * 1024 * 1024;
++	public static final double mb = 1024d * 1024d;
++	public static final long mbl = 1024 * 1024;
++
++	/**
++	 * This will simply load the file by blocks of x rows, then
++	 * sort them in-memory, and write the result to a bunch of 
++	 * temporary files that have to be merged later.
++	 * 
++	 * @param file some flat  file
++	 * @param blockSize the size of a block in megabytes
++	 * @return a list of temporary flat files
++	 */
++	public static List<File> sortInBatch(File file, Comparator<String> cmp, 
++		long blockSize) throws IOException {
++
++		Runtime r = Runtime.getRuntime();
++		blockSize = blockSize * mbl;
++		long viableBlockSize = blockSize;
++
++		long startHeapSize = r.totalMemory() - r.freeMemory();
++		if( r.maxMemory() - startHeapSize < blockSize ) 
++			viableBlockSize = r.maxMemory() - startHeapSize - ( 100 * mbl );
++
++		long heapSize = startHeapSize;
++		System.out.println( "heap at sib entry: " + ( heapSize / mb ) );
++
++		List<File> files = new LinkedList<File>();
++		//long total = 0;
++		int filecounter = 0;
++		BufferedReader fbr = new BufferedReader(new FileReader(file), 
++				bufferSize);
++
++		try{
++			List<String> tmplist =  new LinkedList<String>();
++			String line = "";
++			try {
++				while((line = fbr.readLine() ) != null) {
++					//Calculate the real minimum memory usage of a String
++					//total += 8 * (int) (((line.length() * 2) + 45) / 8) + 8;
++					tmplist.add(line);
++
++					heapSize = r.totalMemory() - r.freeMemory();
++					if ( heapSize - startHeapSize >= viableBlockSize ) {
++						System.out.println( "strings: " + tmplist.size() );
++
++						heapSize = r.totalMemory() - r.freeMemory();
++						System.out.println( "heap before sortAndSave: " + 
++								( heapSize / mb ) );
++
++						files.add(sortAndSave(tmplist,cmp, filecounter));
++
++						heapSize = r.totalMemory() - r.freeMemory();
++						System.out.println( "heap after sortAndSave: " + 
++								( heapSize / mb ) );
++
++						tmplist.clear();
++						r.gc();
++
++						heapSize = r.totalMemory() - r.freeMemory();
++						startHeapSize = heapSize;
++
++						if( r.maxMemory() - startHeapSize < blockSize ) 
++							viableBlockSize = r.maxMemory() - startHeapSize 
++								- ( 100 * mbl );
++						else 
++							viableBlockSize = blockSize;
++
++						System.out.println( "heap after gc: " + 
++								( heapSize / mb ) );
++
++						System.out.printf("file# %d\n", filecounter++);
++						//total = 0;
++					}
++
++				}
++
++				if (tmplist.size() > 0) {
++
++					heapSize = r.totalMemory() - r.freeMemory();
++					System.out.println( "heap before sortAndSave: " + 
++							( heapSize / mb ) );
++
++					files.add(sortAndSave(tmplist,cmp, filecounter));
++
++					heapSize = r.totalMemory() - r.freeMemory();
++					System.out.println( "heap after sortAndSave: " + 
++							( heapSize / mb ) );
++
++					tmplist.clear();
++					r.gc();
++
++					heapSize = r.totalMemory() - r.freeMemory();
++					System.out.println( "heap after gc: " + ( heapSize / mb ) );
++
++					System.out.printf("file# %d\n", filecounter++);
++	
++				}
++
++			} catch(EOFException oef) {
++
++				System.out.println("end of file reached!!!");
++				System.exit(-1);
++				if(tmplist.size()>0) {
++					files.add(sortAndSave(tmplist,cmp, 100));
++					tmplist.clear();
++				}
++
++			}
++		} finally {
++			fbr.close();
++		}
++
++		r.gc();
++
++		heapSize = r.totalMemory() - r.freeMemory();
++		System.out.println( "heap at sib end: " + ( heapSize / mb ) );
++	
++		return files;
++	}
++
++
++	public static File sortAndSave(List<String> tmplist, Comparator<String> cmp,
++			int filecounter) throws IOException  {
++		Collections.sort(tmplist,cmp);  // 
++		
++		//File newtmpfile = File.createTempFile("sortInBatch", "flatfile");
++		//newtmpfile.deleteOnExit();
++
++		File newtmpfile = 
++			new File("sortandsave" + Integer.toString(filecounter));
++
++		BufferedWriter fbw = 
++			new BufferedWriter(new FileWriter(newtmpfile), bufferSize);
++
++		try {
++			for(String r : tmplist) {
++				fbw.write(r);
++				fbw.newLine();
++			}
++		} finally {
++			fbw.close();
++		}
++		return newtmpfile;
++	}
++	/**
++	 * This merges a bunch of temporary flat files 
++	 * @param files
++	 * @param output file
++         * @return The number of lines sorted. (P. Beaudoin)
++	 */
++	public static File mergeSortedFiles(List<File> files, File outputfile, 
++			Comparator<String> cmp) throws IOException {
++
++		PriorityQueue<BinaryFileBuffer> pq = 
++			new PriorityQueue<BinaryFileBuffer>();
++
++		Runtime r = Runtime.getRuntime();
++		long heapSize = r.totalMemory() - r.freeMemory();
++		System.out.println( "heap at mergesf entry: " + ( heapSize / mb ) );
++	
++		for (File f : files) {
++			BinaryFileBuffer bfb = new BinaryFileBuffer(f,cmp);
++			pq.add(bfb);
++		}
++
++		heapSize = r.totalMemory() - r.freeMemory();
++		System.out.println( "heap after files open: " + ( heapSize / mb ) );
++	
++
++		File newtmpfile = File.createTempFile("mergesort", 
++				"sortedfile", new File(parent));
++
++		//newtmpfile.deleteOnExit();  // take effect after the program ends
++		BufferedWriter fbw = new BufferedWriter(new FileWriter(newtmpfile),
++				bufferSize);
++
++		int rowcounter = 0;
++		try {
++			while(pq.size()>0) {
++				BinaryFileBuffer bfb = pq.poll();
++				String r1 = bfb.pop();
++				fbw.write(r1);
++				fbw.newLine();
++				++rowcounter;
++				if(bfb.empty()) {
++					bfb.fbr.close();
++					bfb.originalfile.delete();// we don't need you anymore
++					r.gc();
++				} else {
++					pq.add(bfb); // add it back
++				}
++			}
++		} finally {
++			fbw.close();
++		}
++
++		r.gc();
++
++		heapSize = r.totalMemory() - r.freeMemory();
++		System.out.println( "heap at mergesf exit: " + ( heapSize / mb ) );
++	
++		return newtmpfile;
++	}
++
++	public static void externalSort( String inputfile, String outputfile, 
++		int size ) throws IOException{
++
++		Comparator<String> comparator = new Comparator<String>() {
++			public int compare(String r1, String r2)
++			{
++				//return r1.compareTo(r2);
++				//Make sure fields in the string is seperated by " "
++				//and Zvalues is the first field and have the same width
++				String[] parts1 = r1.split(" ");
++				String[] parts2 = r2.split(" ");
++				return parts1[0].compareTo(parts2[0]);
++			}
++		};
++
++		// Initial sort pass zero
++		File inf = new File(inputfile);
++		parent = inf.getAbsoluteFile().getParent();
++
++		List<File> l = sortInBatch(inf, comparator, size) ;
++
++		System.out.println("Pass Zero is finished");
++
++
++		// Multiple pass 1 .. N merge sort
++		int fanout = 10;
++		int pc = 0;
++		List<File> passResult = new LinkedList<File>();
++		while(true) {
++			while(l.size() > 0) {
++
++				List<File> pass = new LinkedList<File>();
++				for (int i = 0; l.size() > 0 && i < fanout; i++)
++					pass.add(l.remove(0));
++				File f = mergeSortedFiles(pass, new File(outputfile), 
++															comparator);
++				passResult.add(f);
++
++			}  // at end we complete one pass
++
++			pc++;
++			System.out.printf("Pass %d is done\n", pc);
++
++			if( l.size() == 0 && passResult.size() == 1 ) {
++
++				boolean flag = 
++					//passResult.get(0).renameTo(new File(parent, outputfile));
++					passResult.get(0).renameTo(new File(outputfile));
++
++				if (!flag) {
++					System.out.println("base dir : " + parent);
++					System.out.println("file can not be rename!\n");
++				}
++				break;
++
++			}
++
++			l = passResult;
++			passResult = new LinkedList<File>();
++
++		} // while
++
++		System.out.println("Pass N is finished");
++	}
++
++	public static String parent = "";
++
++	public static void main(String[] args) throws IOException {
++		if(args.length<3) {
++			System.out.println("Usage: <input> <output> <blockSize(mb)>");
++			return;
++		}
++
++		String inputfile = args[0];
++		String outputfile = args[1];
++		int size = Integer.valueOf(args[2]);
++
++		externalSort( inputfile, outputfile, size );
++
++	}
++}
++
++
++class BinaryFileBuffer  implements Comparable<BinaryFileBuffer>{
++	public static int BUFFERSIZE = 512;
++	public BufferedReader fbr;
++	private List<String> buf = new LinkedList<String>();
++	int currentpointer = 0;
++	Comparator<String> mCMP;
++	public File originalfile;
++	
++	public BinaryFileBuffer(File f, Comparator<String> cmp) throws IOException {
++		originalfile = f;
++		mCMP = cmp;
++		fbr = new BufferedReader(new FileReader(f), ExternalSort.bufferSize);
++		reload();
++	}
++	
++	public boolean empty() {
++		return buf.size()==0;
++	}
++	
++	private void reload() throws IOException {
++		  buf.clear();
++		  try {
++		  	  String line;
++	 		  while((buf.size()<BUFFERSIZE) && 
++					  ((line = fbr.readLine()) != null))
++				buf.add(line);
++			} catch(EOFException oef) {
++			}		
++	}
++	
++	
++	public String peek() {
++		if(empty()) return null;
++		return buf.get(currentpointer);
++	}
++	public String pop() throws IOException {
++	  String answer = peek();
++	  ++currentpointer;
++	  if(currentpointer == buf.size()) {
++		  reload();
++		  currentpointer = 0;
++	  }
++	  return answer;
++	}
++	
++	public int compareTo(BinaryFileBuffer b) {
++		return mCMP.compare(peek(), b.peek());
++	}
++
++}
+diff -urN org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/spatial/BulkSplit.java de/lmu/ifi/dbs/elki/index/tree/spatial/BulkSplit.java
+--- org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/spatial/BulkSplit.java	2010-03-31 16:12:20.000000000 -0400
++++ de/lmu/ifi/dbs/elki/index/tree/spatial/BulkSplit.java	2012-04-12 20:57:09.052681842 -0400
+@@ -7,6 +7,7 @@
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
++//import java.math.BigInteger;
+ 
+ import de.lmu.ifi.dbs.elki.logging.Logging;
+ import de.lmu.ifi.dbs.elki.math.spacefillingcurves.ZCurve;
+@@ -54,6 +55,7 @@
+    *         chosen strategy
+    */
+   public List<List<N>> partition(List<N> spatialObjects, int minEntries, int maxEntries, Strategy strategy) {
++
+     if(strategy == Strategy.MAX_EXTENSION) {
+       return maximalExtensionPartition(spatialObjects, minEntries, maxEntries);
+     }
+@@ -63,6 +65,7 @@
+     else {
+       throw new IllegalArgumentException("Unknown bulk load strategy!");
+     }
++
+   }
+ 
+   /**
+@@ -163,6 +166,8 @@
+       return partitions;
+     }
+ 
++	/* end 1D case ***************************************************/
++
+     // get z-values
+     List<double[]> valuesList = new ArrayList<double[]>();
+     for(SpatialObject o : spatialObjects) {
+@@ -207,6 +212,21 @@
+     };
+     Collections.sort(objects, comparator);
+ 
++	// The following line is added CZ
++	/*
++	for( N o : objects ) {
++		for( int i = 0; i < o.getDimensionality(); ++i )
++		   System.out.print( o.getMin(1+i) + " " );
++		byte[] z1 = zValues.get(o.getID());
++		BigInteger big = new BigInteger("0");
++		for( int i = 0; i < z1.length; ++i ) {
++		   BigInteger bigtemp = new BigInteger(Integer.toString( ( (int) z1[i] ) & 0xff ));
++           if( i > 0 ) big = big.shiftLeft(8);
++		   big = big.or( bigtemp );
++		}
++		System.out.println(big.toString(2)); 
++	} */
++
+     // insert into partition
+     while(objects.size() > 0) {
+       StringBuffer msg = new StringBuffer();
+diff -urN org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/AbstractRStarTree.java de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/AbstractRStarTree.java
+--- org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/AbstractRStarTree.java	2010-03-31 16:12:20.000000000 -0400
++++ de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/AbstractRStarTree.java	2012-04-12 20:57:09.048925603 -0400
+@@ -1354,4 +1354,4 @@
+ 
+     return new TreeIndexPath<E>(new TreeIndexPathComponent<E>(getRootEntry(), null));
+   }
+-}
+\ No newline at end of file
++}
+diff -urN org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/NonFlatRStarTree.java de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/NonFlatRStarTree.java
+--- org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/NonFlatRStarTree.java	2010-03-31 16:12:20.000000000 -0400
++++ de/lmu/ifi/dbs/elki/index/tree/spatial/rstarvariants/NonFlatRStarTree.java	2012-04-12 20:57:09.050556686 -0400
+@@ -4,11 +4,19 @@
+ import java.util.List;
+ 
+ import de.lmu.ifi.dbs.elki.data.NumberVector;
++import de.lmu.ifi.dbs.elki.data.FloatVector;
++import de.lmu.ifi.dbs.elki.data.DoubleVector;
+ import de.lmu.ifi.dbs.elki.index.tree.spatial.BulkSplit;
+ import de.lmu.ifi.dbs.elki.index.tree.spatial.SpatialEntry;
+ import de.lmu.ifi.dbs.elki.index.tree.spatial.SpatialObject;
+ import de.lmu.ifi.dbs.elki.utilities.optionhandling.parameterization.Parameterization;
+ 
++import java.io.*; // CZ
++import de.lmu.ifi.dbs.elki.index.tree.spatial.BulkSplit;
++import de.lmu.ifi.dbs.elki.persistent.PageFile;
++import de.lmu.ifi.dbs.elki.persistent.PersistentPageFile;
++import de.lmu.ifi.dbs.elki.index.Zorder;
++import de.lmu.ifi.dbs.elki.index.ExternalSort;
+ /**
+  * Abstract superclass for all non-flat R*-Tree variants.
+  * 
+@@ -73,7 +81,7 @@
+   protected int computeHeight() {
+     N node = getRoot();
+     int height = 1;
+-
++  //if (node == null) return height; //added by CZ
+     // compute height
+     while(!node.isLeaf() && node.getNumEntries() != 0) {
+       E entry = node.getEntry(0);
+@@ -124,6 +132,7 @@
+       List<N> nodes = createLeafNodes(objects);
+ 
+       int numNodes = nodes.size();
++      System.out.println("leafNodes: " + numNodes);
+       if(logger.isDebugging()) {
+         msg.append("\n  numLeafNodes = ").append(numNodes);
+       }
+@@ -132,23 +141,31 @@
+       // create directory nodes
+       while(nodes.size() > (dirCapacity - 1)) {
+         nodes = createDirectoryNodes(nodes);
++        System.out.println( "created dirNodes: " + nodes.size() );
+         numNodes += nodes.size();
+         setHeight(getHeight() + 1);
+       }
+ 
++      for( N n : nodes ) System.out.println( n.toString() + " " + n.mbr().toString() );
++
+       // create root
++      System.out.println( "nodes in root: " + nodes.size() );
+       createRoot(root, new ArrayList<SpatialObject>(nodes));
+       numNodes++;
+       setHeight(getHeight() + 1);
+       if(logger.isDebugging()) {
+         msg.append("\n  numNodes = ").append(numNodes);
+       }
++      System.out.println( "total nodes: " + numNodes );
+     }
+     if(logger.isDebugging()) {
+       msg.append("\n  height = ").append(getHeight());
+       msg.append("\n  root " + getRoot());
+       logger.debugFine(msg.toString() + "\n");
+     }
++    System.out.println("total height: " + getHeight());
++    System.out.println("dir Capacity: " + dirCapacity);
++    System.out.println("leaf Capacity: " + leafCapacity);
+   }
+ 
+   /**
+@@ -213,7 +230,8 @@
+     getRootEntry().setMBR(root.mbr());
+ 
+     // write to file
+-    file.writePage(root);
++    //file.writePage(root);
++    int returnId = file.writePage(root);
+     if(logger.isDebuggingFiner()) {
+       StringBuffer msg = new StringBuffer();
+       msg.append("pageNo ").append(root.getID());
+@@ -222,4 +240,336 @@
+ 
+     return root;
+   }
+-}
+\ No newline at end of file
++  
++  //==========================================================================
++  //The following code is added to support disk based bulk loading. //CZ
++
++  /**
++   * Disk based bulk load. The input objects are stored in a file. This
++   * method reads record from the file and create a RStarTree.
++   */
++  public void bulkLoad(O sampleObject, String filename, int size,
++  boolean sortLeafFile, int dim) throws Exception 
++  {
++    initialize(sampleObject);
++    int createdNodes = 0;
++    int dimension = dim;
++
++    // first create an empty root node for the RStarTree
++    N root = createNewDirectoryNode(dirCapacity);
++    root.setID(getRootEntry().getID());   // set 0 as the root page ID
++    int rootID = file.writePage(root);
++ 
++    int numNodes = 0;  // counter for the number of nodes for debuging use
++    //int level = computeLevel(size);
++    int pass = 0;
++    
++    // Create LeafNode
++    String prefix = filename;
++    String suffix = ".sort";
++    String leafFile = null;
++    int block = 256;         // external sort buffer size
++	//System.out.println("block is : " + block);
++
++    if (sortLeafFile) {
++      ExternalSort.externalSort(filename, prefix + suffix, block); 
++      System.gc();
++      leafFile = prefix + suffix;
++    } else
++      leafFile = filename; 
++ 
++    ParseLeafFile plf = new ParseLeafFile (leafFile, prefix + pass, dimension, pass, file, sampleObject);
++
++    while(plf.hasNextNode()) {
++      plf.getNextNode();
++      if (plf.endOfFile)
++        break;
++      numNodes++;
++      //Debug information
++/*
++      if (numNodes % 3000 == 0)
++          System.out.println("pass : " + pass + " , total leaf nodes : " 
++                  + numNodes);
++*/
++    }
++
++	//Delete input file for ParseLeafFile
++    File tfile = null;
++   	if (sortLeafFile) {	
++      tfile = new File(prefix + suffix);
++      tfile.delete();
++	}
++    //System.out.println( "leafNodes: " + numNodes );
++    setHeight(1);
++
++    // Repeatly create dirNodes 
++    boolean cont = true;
++    int nodeCount = numNodes;
++    while(cont) {
++
++      setHeight(getHeight() + 1);
++      String infile = prefix + pass;   
++      ExternalSort.externalSort(infile, prefix + pass + suffix, block); 
++      System.gc();
++      tfile = new File( infile );
++      tfile.delete();
++
++      pass++;
++
++      ParseDirFile pdf = new ParseDirFile(prefix + (pass-1) + suffix, prefix+pass, dimension, pass, root, file);
++	  // System.out.println("pass " + pass + "node " + nodeCount);
++
++      // root node case
++      if ( nodeCount < dirCapacity ) {
++        pdf.handleRoot = true;
++        cont = false;
++		// System.out.println("root node case");
++      }
++ 
++      nodeCount = 0;
++      while(pdf.hasNextNode()) {
++        pdf.getNextNode();
++		if (pdf.endOfFile)
++			break;
++        nodeCount++;
++        numNodes++;
++      }
++      // System.out.println( "pass : " + pass + " , created dirNodes: " + nodeCount );
++
++      tfile = new File( prefix + (pass-1) + suffix );
++      tfile.delete();
++
++    } // while
++    // Delete the final file
++    tfile = new File(prefix + pass);
++    tfile.delete();
++
++    // System.out.println("numNodes: " + numNodes );
++    // System.out.println("Height of the tree is : " + getHeight());
++    getRoot().integrityCheck();
++
++  } // diskBasedBL
++
++  class ParseDirFile {
++    BufferedReader br;
++    BufferedWriter bw;
++    int dimension;
++    boolean flag;
++	boolean endOfFile;
++    PageFile<N> file;
++    public boolean handleRoot;
++    N root;
++ 
++    // level
++    ParseDirFile(String sortedFile, String outFile, int dim, int pass, N root, 
++      PageFile<N> infile) throws Exception {
++        
++      int bufferSize = 1024 * 1024;    
++      this.br = new BufferedReader(new FileReader(sortedFile), bufferSize);  
++      if(!handleRoot) 
++        this.bw = 
++            new BufferedWriter(new FileWriter(outFile), bufferSize);  
++      // need to close it?!
++      this.dimension = dim;
++      this.flag = true;
++	  this.endOfFile = false;
++      this.file = infile;  // reference to index file
++      this.root = root;
++
++    }
++ 
++    boolean hasNextNode() {
++      return flag;  
++    }
++ 
++    public void getNextNode() throws Exception {
++      if (!hasNextNode()) return;
++ 
++      // the number of records required for creating a directory node
++      //int num = dirCapacity - 1;
++      int num = dirCapacity - 1;
++      int counter = 0;
++ 
++      // the list holds the leaf entries used for creating a dirNode
++      ArrayList<N> list = new ArrayList<N>(num);
++ 
++      // For directory node, input format <Zorder, NodePageID>
++      while(counter < num) {
++
++        String line = br.readLine();
++        if (line == null) { 
++          flag = false;
++          br.close();
++          break;
++        }
++
++        counter++;
++ 
++        String[] parts = line.split(" ");
++        int nodeID = Integer.valueOf(parts[1]); // only need NodePageID here
++        N o = file.readPage(nodeID);
++        list.add(o);
++
++      }
++
++	  if (counter == 0) {
++        	bw.close();
++			endOfFile = true;
++		  return;
++	  }
++
++      N dirNode = null;
++      int dirNodeID = -1;
++ 
++      if (handleRoot) {
++        // use root dir node
++        dirNode = root;
++      } else {  
++        // create new dir node  
++        dirNode = createNewDirectoryNode(dirCapacity);
++        dirNodeID = file.writePage(dirNode);
++      }
++
++      /*  
++      System.out.println("list size: " + list.size()); 
++      System.out.println("dirNode size: " + dirNode.getCapacity() );
++      System.out.println("dirNode entries: " + dirNode.getNumEntries() );
++      System.out.println("dirNode id: " + dirNodeID );
++      */
++
++      // insert nodes  
++      for (N o : list) {
++        if(handleRoot) System.out.println(o.toString() + " " + o.mbr().toString() );
++        dirNode.addDirectoryEntry(createNewDirectoryEntry(o));  
++      }
++ 
++      // write to file
++      file.writePage(dirNode);
++ 
++      if( handleRoot ) return;
++ 
++      // write dirNode information into a disk file
++      // output format 
++      // <zorder of lower left corner of the leafnode mbr, pageId>
++      double[] lf = dirNode.mbr().getMin();
++      int [] lfInt = new int[lf.length];
++      for (int i = 0; i < lf.length; i++)
++        lfInt[i] = (int) lf[i];
++ 
++      String zorder = Zorder.valueOf(lf.length, lfInt);
++      String line =  zorder + " " + dirNodeID;
++ 
++      bw.write(line + "\n");  
++ 
++      if (!flag)
++        bw.close();
++    } // getNextNode
++
++  } // ParseDirFile
++
++  class ParseLeafFile 
++  {
++    O sampleObject;
++    BufferedReader br;
++    BufferedWriter bw;
++    int dimension;
++    boolean flag;
++	boolean endOfFile;
++    PageFile<N> file;
++ 
++    // level current level of the RStarTree
++    ParseLeafFile(String sortedFile, String outFile, int dim, int pass, PageFile<N> infile, O sampleObject) throws Exception 
++    {
++      int bufferSize = 1024 * 4;
++      this.br = new BufferedReader(new FileReader(sortedFile), bufferSize);  
++      this.bw = new BufferedWriter(new FileWriter(outFile), bufferSize); 
++      this.dimension = dim;
++      this.flag = true;
++      this.endOfFile = false;
++      this.file = infile;  // reference to index file
++      this.sampleObject = sampleObject;
++    }
++ 
++    boolean hasNextNode() {
++      return flag;  
++    }
++ 
++    public void getNextNode() throws Exception {
++      if (!hasNextNode()) return;
++ 
++      // the number of records required for creating a leaf node
++      int num = leafCapacity - 1;
++      int counter = 0;
++ 
++      // the list holds the leaf entries used for creating a leafNode
++      ArrayList<E> list = new ArrayList<E>(num);
++ 
++      // For leaf node, input format <Zorder, RecordID>
++      while(counter < num) {
++
++        String line = br.readLine();
++        if (line == null) { 
++          flag = false;
++          br.close();
++          break;
++        }
++        counter++;
++ 
++        // parse line
++        String[] parts = line.split(" ");
++        int[] zvalue = Zorder.toCoord(parts[0], dimension);
++        double[] fzvalue = new double[dimension];
++        for (int i = 0; i < dimension; i++) {
++          fzvalue[i] = zvalue[i] * 1d;  
++        }
++
++        // create an object and save it into a list
++        O o = null;  // need a way to make it generic
++
++        // initialize generic object from double type
++        // Since zvalue are all integers, the type of fzvalue doesnot
++        // really matter in this case as long as it can fit the entire integer.
++        o = sampleObject.newInstance(fzvalue);  
++        o.setID(Integer.valueOf(parts[1]));
++
++        list.add(createNewLeafEntry(o));
++      }
++      
++      if (counter == 0) {
++         bw.close();           // Leaf node case;
++         this.endOfFile = true;
++         return;
++      }
++    
++      // create leaf node  
++      N leafNode = createNewLeafNode(leafCapacity);
++      int leafNodeID = file.writePage(leafNode);
++      //System.out.println("leafNode size: " + leafNode.getCapacity() );
++    
++      // insert data  
++      for (E e : list) {
++        leafNode.addLeafEntry(e);  
++      }
++ 
++      // write to file
++      file.writePage(leafNode);
++ 
++      // write leafNode information into a disk file
++      // output format 
++      // <pageID, zorder, lower left corner of the leafnode mbr >
++      double[] lf = leafNode.mbr().getMin();
++      int [] lfInt = new int[lf.length];
++      for (int i = 0; i < lf.length; i++)
++        lfInt[i] = (int) lf[i];
++ 
++      String zorder = Zorder.valueOf(lf.length, lfInt);
++      String line = zorder + " " + leafNodeID;
++ 
++      bw.write(line + "\n");  
++      if (!flag)
++        bw.close();
++    } // getNextNode
++  } // ParseLeafFile
++//=============================================================================
++
++}
+diff -urN org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/TreeIndex.java de/lmu/ifi/dbs/elki/index/tree/TreeIndex.java
+--- org-0.3/src/de/lmu/ifi/dbs/elki/index/tree/TreeIndex.java	2010-03-31 16:12:20.000000000 -0400
++++ de/lmu/ifi/dbs/elki/index/tree/TreeIndex.java	2012-04-12 20:57:09.041556361 -0400
+@@ -146,6 +146,8 @@
+     // page size
+     if(config.grab(PAGE_SIZE_PARAM)) {
+       pageSize = PAGE_SIZE_PARAM.getValue();
++		//System.out.println("pageSize " + pageSize);
++		//System.exit(-1);
+     }
+     // cache size
+     if(config.grab(CACHE_SIZE_PARAM)) {
+@@ -370,4 +372,4 @@
+   public String getFileName() {
+     return fileName;
+   }
+-}
+\ No newline at end of file
++}
+diff -urN org-0.3/src/de/lmu/ifi/dbs/elki/index/Zorder.java de/lmu/ifi/dbs/elki/index/Zorder.java
+--- org-0.3/src/de/lmu/ifi/dbs/elki/index/Zorder.java	1969-12-31 19:00:00.000000000 -0500
++++ de/lmu/ifi/dbs/elki/index/Zorder.java	2012-04-12 20:57:09.052681842 -0400
+@@ -0,0 +1,173 @@
++package de.lmu.ifi.dbs.elki.index;
++
++import java.io.*;
++import java.util.*;
++import java.util.Date;
++import java.util.Random;
++import java.util.ArrayList;
++import java.math.*;
++
++public class Zorder {
++	// Pad a String 
++	public static String createExtra(int num) {
++		if( num < 1 ) return "";
++
++		char[] extra = new char[num];
++		for (int i = 0; i < num; i++) 
++			extra[i] = '0';
++		return (new String(extra)); 	
++	}
++
++	public static int[] createShift(int dimension, Random rin, boolean shift) {
++		Random r = rin; 
++		int[] rv = new int[dimension];  // random vector 
++
++		if (shift) {
++			for (int i = 0; i < dimension; i++) {
++				rv[i] = ((int) Math.abs(r.nextInt())); 
++				// System.out.printf("%d ", rv[i]);
++			}	
++			//System.out.println();
++		} else {
++			for (int i = 0; i < dimension; i++)	
++				rv[i] = 0;
++		}
++
++		return rv;
++	}
++
++	public static int maxDecDigits( int dimension ) {
++		int max = 32;
++		BigInteger maxDec = new BigInteger( "1" );
++		maxDec = maxDec.shiftLeft( dimension * max );
++		maxDec.subtract( BigInteger.ONE );
++		return maxDec.toString().length();
++	}
++
++	public static String maxDecString( int dimension ) {
++		int max = 32;
++		BigInteger maxDec = new BigInteger( "1" );
++		maxDec = maxDec.shiftLeft( dimension * max );
++		maxDec.subtract( BigInteger.ONE );
++		return maxDec.toString();
++	}
++	
++	// Convert an multi-dimensional coordinate into a zorder
++	// coordinates have already been scaled and shifted
++	public static String valueOf(int dimension, int[] coord) 
++	{
++		Vector<String> arrPtr = new Vector<String>(dimension);
++		//System.out.println( "maxDec " + maxDec.toString() );
++        int max = 32;
++		int fix = maxDecDigits(dimension); //global maximum possible zvalue length
++		//System.out.println( fix );
++
++		for (int i = 0; i < dimension; i++) {
++			String p = Integer.toBinaryString((int)coord[i]);
++			//System.out.println( coord[i] + " " + p ); 
++			arrPtr.add(p);
++		}
++
++		for( int i = 0; i < arrPtr.size(); ++i ) {
++			String extra = createExtra( max - arrPtr.elementAt(i).length() ); 
++			arrPtr.set(i, extra + arrPtr.elementAt(i) );
++			//System.out.println( i + " " + arrPtr.elementAt(i) );
++		}
++	
++		char[] value = new char[dimension * max];
++		int index = 0;
++
++		// Create Zorder
++		for (int i = 0; i < max; ++i ) {
++			for (String e: arrPtr) {
++				char ch = e.charAt(i);
++				value[index++] = ch;
++			}	
++		}		
++			
++		String order = new String(value);
++		//System.out.println( value );
++		// Covert a binary representation of order into a big integer
++		BigInteger ret = new BigInteger( order, 2 );
++
++		// Return a fixed length decimal String representation of 
++		// the big integer (z-order)
++		order = ret.toString();	
++		//System.out.println( order );
++		if (order.length() < fix) {
++			String extra = createExtra(fix - order.length());
++			order = extra + order;
++		} else if (order.length() > fix) {
++			System.out.println("too big zorder, need to fix Zorder.java");
++			System.exit(-1);
++		}
++
++		//System.out.println(order);
++		
++		return order;
++	}
++
++	//update on 11/24/2010 by cz
++	//update 11.29.2010 by jeff
++	public static int[] toCoord(String z, int dimension) 
++	{
++		int DECIMAL_RADIX = 10;
++		int BINARY_RADIX = 2;
++
++		if (z == null) {
++			System.out.println("Z-order Null pointer!!!@Zorder.toCoord");
++			System.exit(-1);	
++		}
++
++		BigInteger bigZ = new BigInteger(z, DECIMAL_RADIX);
++		String bigZStr = bigZ.toString(BINARY_RADIX);
++
++		// Test
++		//bigZStr = "1110011";
++		//System.out.println(bigZStr);
++
++		int len = bigZStr.length();
++		// System.out.println("leng before is" + len);
++		//int prefixZeros = len % dimension;
++		int prefixZeros = 0;
++		if (len % dimension != 0)
++			prefixZeros = dimension - len % dimension;
++
++		//System.out.println("--");
++		//System.out.println(prefixZeros);
++
++		String prefix = Zorder.createExtra(prefixZeros);
++		bigZStr = prefix + bigZStr;
++		
++		len = bigZStr.length();
++		//System.out.println(len);
++
++		if (len % dimension != 0) {
++			System.out.println("Wrong prefix!!!@Zorder.toCoord");
++			System.exit(-1);
++		}
++
++		//The most significant bit is save at starting position of 
++		//the char array.
++		char[] bigZCharArray = bigZStr.toCharArray();
++
++		int[] coord = new int[dimension];
++		for (int i = 0; i < dimension; i++)
++			coord[i] = 0;
++
++
++
++                for( int i = 0; i < bigZCharArray.length; ) {
++                   for( int j = 0; j < dimension; ++j ) {
++                      coord[j] <<= 1;
++                      coord[j] |= bigZCharArray[i++] - '0';
++                   }
++                }
++
++		return coord;
++	}
++
++	public static void main(String[] args) {
++		// Test case
++	}
++}

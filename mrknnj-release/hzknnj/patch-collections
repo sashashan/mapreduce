@@ -1,0 +1,817 @@
+diff -urN src/com/mellowtech/collections/AbstractBPlusTree.java new/com/mellowtech/collections/AbstractBPlusTree.java
+--- src/com/mellowtech/collections/AbstractBPlusTree.java	2013-09-04 13:44:45.151348551 -0600
++++ new/com/mellowtech/collections/AbstractBPlusTree.java	2013-09-04 13:12:20.891353689 -0600
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2000-2004, Rickard Cöster, Martin Svensson
++ * Copyright (c) 2000-2004, Rickard Cï¿½ster, Martin Svensson
+  * All rights reserved.
+  * 
+  * Redistribution and use in source and binary forms, with or without 
+@@ -31,8 +31,8 @@
+ 
+ package com.mellowtech.collections;
+ 
+-//import com.mellowtech.disc.*;
+ import com.mellowtech.disc.*;
++
+ import java.io.*;
+ import java.net.URL;
+ import java.util.*;
+@@ -141,10 +141,21 @@
+    * Name of block count file
+    */
+   protected String mBlockCountFileName;
+-  
+-  
+-  
+-  
++
++  //The following cache stuff are added by CZ
++  /**
++   *  The map holding the ojects of the LRU Cache.
++   *  For indexFile and valueFile 
++   */
++  protected LinkedHashMap<Integer, SortedBlock> indexmap;
++  protected LinkedHashMap<Integer, SortedBlock> valuemap;
++  protected int indexCacheSize; 
++  protected int valueCacheSize;
++  protected int valuePageSize;
++  protected int indexPageSize;
++  protected static int indexCacheInPage;
++  protected static int valueCacheInPage;
++
+   /*****************CONSTRUCTORS***************************/
+ 
+   /**
+@@ -210,6 +221,10 @@
+     leafLevel = -1;
+     openIndex(true, indexBlockSize);
+     openValues(true, valueBlockSize);
++	//Start -- Added by CZ 
++	indexPageSize = indexBlockSize;
++	valuePageSize = valueBlockSize;
++	//End -- Added by CZ 
+ 
+     mBlockCountFileName = fName + ".bc";
+     openBlockCountFile(true);
+@@ -218,7 +233,7 @@
+     valueFile.insertBlock(-1);
+     SortedBlock sb = new SortedBlock();
+     sb.setBlock(new byte[valueFile.getBlockSize()], keyValues, true, 
+-		sb.PTR_NORMAL);
++		sb.PTR_BIG);
+     writePVBlock(0, sb);
+     rootPage = valueFile.getPhysicalBlockNo(0);
+     this.fName = fName;
+@@ -275,6 +290,47 @@
+     //valueFile.setCache(tmp1);
+   }
+ 
++  // Start --- Added by CZ
++  public void setTreeCache(int indexcachesize, int valuecachesize){
++
++    this.indexCacheSize = indexcachesize;
++    this.valueCacheSize = valuecachesize;
++
++	indexCacheInPage = this.indexCacheSize / this.indexPageSize;
++	valueCacheInPage = this.valueCacheSize / this.valuePageSize;
++
++	float hashTableLoadFactor = 0.75f;
++	int hashTableCapacity1 = (int) Math.ceil(indexCacheInPage /
++		hashTableLoadFactor) + 1;
++
++	int hashTableCapacity2 = (int) Math.ceil(valueCacheInPage /
++		hashTableLoadFactor) + 1;	
++
++	LinkedHashMap<Integer, SortedBlock> 
++      indexLhm = new LinkedHashMap<Integer, SortedBlock>(hashTableCapacity1,
++			  hashTableLoadFactor, true)
++      {
++        @Override
++        protected boolean removeEldestEntry(Map.Entry<Integer, SortedBlock> eldest) {
++          return size() > AbstractBPlusTree.indexCacheInPage;
++        }	
++	  };
++	this.indexmap = indexLhm;
++
++	LinkedHashMap<Integer, SortedBlock> 
++      valueLhm = new LinkedHashMap<Integer, SortedBlock>(hashTableCapacity2,
++			  hashTableLoadFactor, true)
++      {
++        @Override
++        protected boolean removeEldestEntry(Map.Entry<Integer, SortedBlock> eldest) {
++          return size() > AbstractBPlusTree.valueCacheInPage;
++        }	
++	  };
++	this.valuemap = valueLhm;
++
++  }
++  // End --- Added by CZ
++
+   /**
+    * Drops the index and key file cache. Caching is under development and
+    * this method is effectivly ignored.
+@@ -367,8 +423,284 @@
+     throws IOException{
+     ;
+   }
+-  
++
+   //SEARCHING:
++  /**
++   * Get the average number per block this is going to
++   * take a lot of time
++   *
++   */
++  public int numberOfElementsPerBlock(int sample) {
++	int total = 0;
++	SortedBlock sb;
++	int i;
++ 	for (i = 0; i < valueFile.getNumberOfBlocks() && i < sample; i++) {
++		sb = getPVBlock(i);
++		total += sb.getNumberOfElements(); 	
++	}
++
++    int ret;
++	if (i == sample)
++		ret = total / i;
++	else
++		ret = total / valueFile.getNumberOfBlocks();
++	//System.out.println(ret);
++	return ret;	
++  }
++
++  /**
++   * Get the smallest key.
++   * @return The smallest key.
++   * Added by CZ
++   */
++  public KeyValue getSmallest() {
++ 	int lblock = 0;
++	// The first logical block (0) should contain the smallest key.
++	SortedBlock sb;
++	sb = getPVBlock(lblock);
++	if (sb.getNumberOfElements() == 0)
++		return null;
++
++	// The first element in block 0 should be the one with the
++	// smallest key.
++	int pos = 0;
++	KeyValue ret;
++	ret = (KeyValue) sb.getKey(pos);
++
++	return ret;
++  }
++
++  /**
++   * Get the largest key.
++   * @return The largest key.
++   * Added by CZ
++   */
++  public KeyValue getLargest() {
++ 	int lblock = 0;
++	// The last logical block should contain the largest key.
++	lblock = valueFile.getNumberOfBlocks() - 1;
++	SortedBlock sb;
++	sb = getPVBlock(lblock);
++	if (sb.getNumberOfElements() == 0)
++		return null;
++
++	// The last element in block 0 should be the one with the
++	// smallest key.
++	int pos = 0;
++	pos = sb.getNumberOfElements() - 1; 
++	KeyValue ret;
++	ret = (KeyValue) sb.getKey(pos);
++
++	return ret;
++  }
++
++  
++  /**
++   * Find out 2 * num keys around a search key.
++   * @param key the search key.
++   * @param num the number of keys larger and smaller to the search key.
++   * @return An ArrayList contains two lists. One of them contains num keys
++   * that smaller than key; another one contains num + 1 keys that larger 
++   * than or eqaul to key.
++   * Added by CZ
++   */
++
++  public ArrayList< ArrayList<KeyValue> >
++	rangeSearch(ByteStorable key, int num) throws IOException{
++    //KeyValue kv = searchKeyValue(key);
++    //return (kv == null) ? null : kv.getValue();
++
++    // Basically modified from searchKeyValue
++    // Return a physical block number potentially containing the key 
++    int block = searchBlock(key);
++	if (block == -1)
++		return null;
++
++	// Basically modified from searchValueFile ***********
++	if(valueFile.getNumberOfBlocks() == 0)
++		return null;
++
++	// Get logicalBlockNo from physical blockNo
++	int logicalBlockNo = valueFile.getLogicalBlockNo(block);
++	// public int getPhysicalBlockNo(int logicalPos){
++
++	// The block containing the key
++	SortedBlock sb = getPVBlock(block);
++
++	// Something new
++	int pos = sb.binarySearch(new KeyValue(key, null));
++
++	if (pos < 0) {
++		// key is not in this block, we get a neighbor 
++		// This part is tricky need to consider the boundary condition
++		// sb.high / sb.0 both situations has to be taken into considerations
++		// Can not find this point
++		pos = Math.abs(pos) - 1;
++		if (pos > sb.getNumberOfElements() - 1)
++			pos = sb.getNumberOfElements() - 1;
++	}
++
++	// Left num elements and right num elements
++	SortedBlock initialSb = sb;
++	SINFO s1 = new SINFO(); 
++ 	ArrayList<KeyValue> leftResult = leftSearch(logicalBlockNo, sb, 
++		 pos, num + 1, s1);
++	sb = initialSb;
++
++	SINFO s2 = new SINFO(); 
++ 	ArrayList<KeyValue> rightResult = rightSearch(logicalBlockNo, sb, 
++		 pos + 1, num, s2);
++
++	ArrayList<KeyValue> leftAdd = null;
++	ArrayList<KeyValue> rightAdd = null;
++	if (s1.remain == 0 && s2.remain==0){
++		//nothing is need to be done	
++	} else if (s1.remain !=0 && s2.remain !=0) {
++		//something wrong
++		System.out.println("Two few records in the B+tree than k values");
++	} else if (s1.remain != 0) {
++		// Need to search more records from the right side of the B+-tree
++		SINFO s11 = new SINFO();
++		leftAdd = rightSearch(s2.lbn, s2.sb, s2.pos, s1.remain, s11);
++		leftResult.addAll(leftAdd);
++		if (s11.remain != 0)
++			System.out.println("Not enough points in rangeSearch");
++	} else if (s2.remain !=0) {
++		// Need to search more records from the left side of the B+-tree	
++		SINFO s22 = new SINFO();
++		rightAdd = leftSearch(s1.lbn, s1.sb, s1.pos, s2.remain, s22);
++		rightResult.addAll(rightAdd);
++		if (s22.remain != 0)
++			System.out.println("Not enough points in rangeSearch");
++	}
++
++	ArrayList< ArrayList<KeyValue> >
++		allList = new ArrayList< ArrayList<KeyValue> >(2);
++	allList.add(leftResult);
++	allList.add(rightResult);
++
++	return allList;	
++  }
++
++  /**
++   * Retrieves num number of records larger/smaller starting from a given 
++   * record.
++   * @param lbn the number logical block containing the search position
++   * @param pos the starting position of the search 
++   * @param num the number of neighbors to be retrieved
++   * @return ArrayList containing up to num neighbors
++   */
++  public ArrayList<KeyValue> leftSearch(int lbn, SortedBlock sb, 
++		  int pos, int num, SINFO sinfo) {
++	//int pos, int num) {
++	ArrayList<KeyValue> neighbors = new ArrayList<KeyValue>(num);
++
++	boolean stop = false;		// true if found all #num neighbors
++
++	// Check validation of the logical block number
++	if (lbn < 0 || lbn > valueFile.getLastBlockNo()) 
++		return null;
++
++	// Check validation of the number of records to be retrieved
++	if (num <= 0) 
++		return null;	
++
++	while (!stop) {
++		// Need to guarantee the pos is in the range of sortedblock
++		//  0 . . NumberOfElement - 1
++		int st = pos;
++		int ed = 0;
++		int i;
++
++		for (i = st; i >= ed; i--) {
++			KeyValue result = (KeyValue) sb.getKey(i);
++			neighbors.add(result);		
++			num--;
++			if (num == 0) {
++				sinfo.pos = i - 1;  
++				sinfo.lbn =lbn;
++				sinfo.sb = sb;
++				break;
++			}
++		}
++
++		if (i >= 0)         //num equals to 0
++			stop = true;
++		else {             // Current block has been process
++			if (--lbn < 0) {
++				stop = true;
++				sinfo.remain = num;
++			}
++			else {
++				int pbn = valueFile.getPhysicalBlockNo(lbn);	
++				sb = getPVBlock(pbn);
++				pos = sb.getNumberOfElements() - 1;
++			}
++		}
++	}
++
++
++	return neighbors;
++  } // getNeighbors 
++
++  /**
++   * Retrieves num number of records larger/smaller starting from a given 
++   * record.
++   * @param lbn the number logical block containing the search position
++   * @param pos the starting position of the search 
++   * @param num the number of neighbors to be retrieved
++   * @return ArrayList containing up to num neighbors
++   */
++  public ArrayList<KeyValue> rightSearch(int lbn, SortedBlock sb, 
++		  int pos, int num, SINFO sinfo) {
++	ArrayList<KeyValue> neighbors = new ArrayList<KeyValue>(num);
++
++	boolean stop = false;		// true if found all #num neighbors
++
++	// Check validation of the logical block number
++	if (lbn < 0 || lbn > valueFile.getLastBlockNo()) 
++		return null;
++
++	// Check validation of the number of records to be retrieved
++	if (num <= 0) 
++		return null;	
++	
++	while (!stop) {
++		int numInSb = sb.getNumberOfElements(); 
++
++		// Need to guarantee the pos is in the range of sortedblock
++		//  0 . . NumberOfElement - 1
++		int st = pos;
++		int ed = numInSb - 1;
++		int i;
++		for (i = st; i <= ed; i++) {
++			KeyValue result = (KeyValue) sb.getKey(i);
++			neighbors.add(result);		
++			num--;
++			if (num == 0) {
++				sinfo.pos = i + 1;
++				sinfo.lbn =lbn;
++				sinfo.sb = sb;
++				break;
++			}
++		}
++
++		if (i <= ed)       //num equals to 0
++			stop = true;
++		else              // Current block has been process
++			if (++lbn > valueFile.getLastBlockNo()) {
++				stop = true;
++				sinfo.remain = num;
++			}
++			else {
++				int pbn = valueFile.getPhysicalBlockNo(lbn);	
++				sb = getPVBlock(pbn);
++				pos = 0;
++			}
++	}
++
++	return neighbors;
++  } // getNeighbors 
+   
+   /**
+    * Returns the key/value for a given key or null if the key was not found.
+@@ -382,7 +714,6 @@
+       return null;
+     return searchValueFile(key, block);
+   }
+-
+   
+   /**
+    * Returns the value for a given key. Returns null either if the key was
+@@ -436,8 +767,59 @@
+    * @return the value corresponing to the key
+    */
+   public ByteStorable delete(ByteStorable key){return null;}
+-  
++ 
++  //Extending CREATING INDEX FROM SORTED DATA:
++  //bulk loading by cz
++  public void createIndexBL(String sfile, int bufLen, int type)
++	  throws IOException{
++    SortedBlock sb = new SortedBlock();
++    byte b[] = new byte[valueFile.getBlockSize()];
++    sb.setBlock(b, keyValues, true, sb.PTR_BIG);
++    SBBNo[] levels = new SBBNo[20];
++
++    KeyValue tmpKV = new KeyValue();
++    //valueFile.insertBlock(-1);
++    int bNo = 0; 
++
++	//File related vars
++	FileReader fin = new FileReader(sfile);
++	BufferedReader br = new BufferedReader(fin, bufLen);
++	char ch = ' ';
++	int pos = 0;
++	// Go through every record in sorted file : sfile
++	while (true) {
++		String line = br.readLine();
++		if (line == null)
++			break;
++		if (type == 0) {	// types are CBString
++			String[] parts =line.split(" +");
++			String key = parts[0].trim();
++			int value = Integer.valueOf(parts[1]);
++			
++			CBString nkey = new CBString(key);
++			CBInt nvalue = new CBInt(value);	
++            tmpKV = new KeyValue(nkey, nvalue);
++		} else {
++			System.out.println("Type error!");
++			System.exit(-1);	
++		}
++
++        if(!sb.fitsKey(tmpKV)){
++	      writeVBlock(bNo, sb);
++	      valueFile.insertBlock(bNo);
++	      bNo++;
++	      BTreeKey sep = generateSeparator(sb, tmpKV);
++	      sep.leftNode = bNo - 1;
++	      insertSeparator(sep, levels, 0, bNo);
++	      sb.setBlock(b, keyValues, true, sb.PTR_BIG);
++        }
++        sb.insertKeyUnsorted(tmpKV);
++	}
+ 
++    writeVBlock(bNo, sb);
++    if(levels[0] != null) //we have to write the index levels
++      writeIndexBlocks(levels);
++  }
+   //CREATING INDEX FROM SORTED DATA:
+ 
+   /**
+@@ -451,7 +833,7 @@
+   public void createIndex(KeyValue[] keysAndValues) throws IOException{
+     SortedBlock sb = new SortedBlock();
+     byte b[] = new byte[valueFile.getBlockSize()];
+-    sb.setBlock(b, keyValues, true, sb.PTR_NORMAL);
++    sb.setBlock(b, keyValues, true, sb.PTR_BIG);
+     KeyValue tmpKV = new KeyValue();
+     SBBNo[] levels = new SBBNo[20];
+ 
+@@ -460,13 +842,13 @@
+     for(int i = 0; i < keysAndValues.length; i++){
+       tmpKV = keysAndValues[i];
+       if(!sb.fitsKey(tmpKV)){
+-	writeVBlock(bNo, sb);
+-	valueFile.insertBlock(bNo);
+-	bNo++;
+-	BTreeKey sep = generateSeparator(sb, tmpKV);
+-	sep.leftNode = bNo - 1;
+-	insertSeparator(sep, levels, 0, bNo);
+-	sb.setBlock(b, keyValues, true, sb.PTR_NORMAL);
++		writeVBlock(bNo, sb);
++		valueFile.insertBlock(bNo);
++		bNo++;
++		BTreeKey sep = generateSeparator(sb, tmpKV);
++		sep.leftNode = bNo - 1;
++		insertSeparator(sep, levels, 0, bNo);
++		sb.setBlock(b, keyValues, true, sb.PTR_BIG);
+       }
+       sb.insertKeyUnsorted(tmpKV);
+     }
+@@ -508,7 +890,7 @@
+       levels[current].sb = new SortedBlock();
+       levels[current].sb.setBlock(new byte[indexFile.getBlockSize()], 
+ 				  indexKeys, true, 
+-				  sb.PTR_NORMAL, (short) 4);
++				  sb.PTR_BIG, (short) 4);
+       indexFile.insertBlock(indexFile.getLastBlockNo());
+       levels[current].bNo 
+ 	= indexFile.getPhysicalBlockNo(indexFile.getLastBlockNo());
+@@ -522,7 +904,7 @@
+ 
+       //create the new block:
+       sb.setBlock(new byte[indexFile.getBlockSize()], indexKeys, true, 
+-		  sb.PTR_NORMAL, (short) 4);
++		  sb.PTR_BIG, (short) 4);
+       levels[current].sb = sb;
+       indexFile.insertBlock(indexFile.getLastBlockNo());
+       levels[current].bNo 
+@@ -906,7 +1288,7 @@
+     //create the new block:
+     SortedBlock sb = new SortedBlock();
+     sb.setBlock(new byte[indexFile.getBlockSize()],
+-		indexKeys, true, sb.PTR_NORMAL, (short) 4);
++		indexKeys, true, sb.PTR_BIG, (short) 4);
+ 
+     //set right pointer to newly created KeyValue block and 
+     //left key to old rightmost key
+@@ -1023,16 +1405,27 @@
+    * @return a sorted block of keys.
+    */
+   protected SortedBlock getBlock(int blockNo){
+-    SortedBlock sb = new SortedBlock();
+-    try{
+-      sb.setBlock(indexFile.readPhysicalBlock(blockNo), 
+-		  indexKeys, false, sb.PTR_NORMAL, (short)4);
+-      return sb;
+-    }
+-    catch(IOException e){
+-      System.out.println(e);
+-      return null;
+-    }
++    // First read from the indexCache 
++    SortedBlock sbInCache = indexmap.get(blockNo);
++
++	if (sbInCache != null) {
++      return sbInCache;
++	} else {
++
++      SortedBlock sb = new SortedBlock();
++      try{
++
++        sb.setBlock(indexFile.readPhysicalBlock(blockNo), 
++		  indexKeys, false, sb.PTR_BIG, (short)4);
++		indexmap.put(blockNo, sb); // Added by CZ put the block into cache
++        return sb;
++      }
++      catch(IOException e){
++        System.out.println(e);
++        return null;
++      }
++
++	}
+   }
+ 
+   /**
+@@ -1193,7 +1586,7 @@
+     SortedBlock sb = new SortedBlock();
+     try{
+       sb.setBlock(valueFile.readBlock(blockNo), 
+-		  keyValues, false, sb.PTR_NORMAL, (short) 0);
++		  keyValues, false, sb.PTR_BIG, (short) 0);
+       return sb;
+     }
+     catch(IOException e){
+@@ -1207,11 +1600,12 @@
+    * @param blockNo a physical block number
+    * @return a sorted block of key/value pairs
+    */
++  /*
+   protected SortedBlock getPVBlock(int blockNo){
+     SortedBlock sb = new SortedBlock();
+     try{
+       sb.setBlock(valueFile.readPhysicalBlock(blockNo), 
+-		  keyValues, false, sb.PTR_NORMAL, (short)0);
++		  keyValues, false, sb.PTR_BIG, (short)0);
+       return sb;
+     }
+     catch(IOException e){
+@@ -1219,6 +1613,30 @@
+       return null;
+     }
+   }
++  */
++
++  protected SortedBlock getPVBlock(int blockNo){
++    // First read from the valueCache 
++    SortedBlock sbInCache = valuemap.get(blockNo);
++
++	if (sbInCache != null) {
++      return sbInCache;
++	} else {
++
++      SortedBlock sb = new SortedBlock();
++      try{
++        sb.setBlock(valueFile.readPhysicalBlock(blockNo), 
++		  keyValues, false, sb.PTR_BIG, (short)0);
++	    valuemap.put(blockNo, sb);
++        return sb;
++      }
++      catch(IOException e){
++        System.out.println(e);
++        return null;
++      }
++
++	}
++  }
+ 
+   private void writeVBlock(int blockNo, SortedBlock sb)
+      throws IOException{
+@@ -1227,10 +1645,22 @@
+     
+     int logicalBlockNo = blockNo;
+     int count = sb.getNumberOfElements();
++
+     if (mBlockCountFile.contains(logicalBlockNo))
+       mBlockCountFile.updateRecord(logicalBlockNo, count);
+     else
+       mBlockCountFile.put(logicalBlockNo, count);
++      //      System.out.print("Last VB block = ");
++      //System.out.println(valueFile.getLastBlockNo());
++  
++    if (!mBlockCountFile.contains(valueFile.getLastBlockNo()) &&
++            valueFile.getLastBlockNo() != -1) { // CZ
++      count = 0;
++      //      System.out.print("Last VB block = ");
++      //System.out.println(valueFile.getLastBlockNo());
++      mBlockCountFile.put(valueFile.getLastBlockNo(), count);
++    }
++ 
+   }
+ 
+   private void writePVBlock(int blockNo, SortedBlock sb)
+@@ -1239,10 +1669,26 @@
+     
+     int logicalBlockNo = valueFile.getLogicalBlockNo(blockNo);
+     int count = sb.getNumberOfElements();
++/*
++	System.out.print("logicalBlockNo is : ");
++	System.out.println(logicalBlockNo);
++*/
++
+     if (mBlockCountFile.contains(logicalBlockNo))
+       mBlockCountFile.updateRecord(logicalBlockNo, count);
+     else
+       mBlockCountFile.put(logicalBlockNo, count);
++
++      //System.out.print("Last PVB block = ");
++      //System.out.println(valueFile.getLastBlockNo());
++    if (!mBlockCountFile.contains(valueFile.getLastBlockNo()) &&
++            valueFile.getLastBlockNo() != -1) { // CZ
++      //System.out.print("Last PVB block = ");
++      //System.out.println(valueFile.getLastBlockNo());
++      count = 0;
++      mBlockCountFile.put(valueFile.getLastBlockNo(), count);
++    }
++
+   }
+ 
+   private void redistribute(SortedBlock small, SortedBlock large,
+@@ -1352,8 +1798,16 @@
+       buff.append('\t');
+   }
+ 
++  
+ 
+   /********************INNER CLASSES*****************************************/
++  class SINFO {
++    public int lbn;
++    public int pos;
++    public int remain;
++    public SortedBlock sb;
++  }
++
+   class SBBNo{
+     SortedBlock sb;
+     int bNo;
+@@ -1371,7 +1825,7 @@
+       if(!fileIterator.hasNext())
+ 	return;
+       b = (byte []) fileIterator.next();
+-      sb.setBlock(b, keyValues, false, sb.PTR_NORMAL);
++      sb.setBlock(b, keyValues, false, sb.PTR_BIG);
+       sbIterator = sb.iterator(new KeyValue(key,null));
+     }
+     
+@@ -1380,7 +1834,7 @@
+       if(!fileIterator.hasNext())
+ 	return;
+       b = (byte []) fileIterator.next();
+-      sb.setBlock(b, keyValues, false, sb.PTR_NORMAL);
++      sb.setBlock(b, keyValues, false, sb.PTR_BIG);
+       sbIterator = sb.iterator();
+     }
+     
+@@ -1391,7 +1845,7 @@
+ 	return true;
+       while(fileIterator.hasNext()){
+ 	b = (byte []) fileIterator.next();
+-	sb.setBlock(b, keyValues, false, sb.PTR_NORMAL);
++	sb.setBlock(b, keyValues, false, sb.PTR_BIG);
+ 	sbIterator = sb.iterator();
+ 	if(sbIterator.hasNext())
+ 	  return true;
+diff -urN src/com/mellowtech/collections/BPlusTree.java new/com/mellowtech/collections/BPlusTree.java
+--- src/com/mellowtech/collections/BPlusTree.java	2013-09-04 13:44:45.151348551 -0600
++++ new/com/mellowtech/collections/BPlusTree.java	2013-09-04 13:09:56.171351179 -0600
+@@ -245,6 +245,10 @@
+     if(level == leafLevel){
+       int left = getPreviousNeighbor(search, sb);
+       int right = getNextNeighbor(search, sb);
++		System.out.print("left is : ");   // czhang
++		System.out.print(left);
++		System.out.print("right is : ");
++		System.out.println(right);
+       ret = deleteKeyValue(kv, node, left, right);
+       if(ret == null){
+ 	return null;
+diff -urN src/com/mellowtech/collections/IntArrayFile.java new/com/mellowtech/collections/IntArrayFile.java
+--- src/com/mellowtech/collections/IntArrayFile.java	2013-09-04 13:44:45.151348551 -0600
++++ new/com/mellowtech/collections/IntArrayFile.java	2013-09-04 13:09:56.171351179 -0600
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2000-2004, Rickard Cöster, Martin Svensson
++ * Copyright (c) 2000-2004, Rickard Cï¿½ster, Martin Svensson
+  * All rights reserved.
+  * 
+  * Redistribution and use in source and binary forms, with or without 
+@@ -43,7 +43,7 @@
+  * array, meaning that it is always as large as the number of
+  * elements in it.
+  *
+- * @author Rickard Cöster
++ * @author Rickard Cï¿½ster
+  */
+ public class IntArrayFile{
+ 
+@@ -208,8 +208,16 @@
+    * @exception IOException if an error occurs
+    */
+   public void put(int record, int value) throws IOException{
++/*
++	System.out.print("record = : ");
++	System.out.print(record);
++	System.out.print(" highrecord = : ");
++	System.out.println(highRecord);
++*/
+     if(record > highRecord + 1)
++    //if(record > highRecord)
+       throw new IOException("record out of bounds");
++	
+     
+     //highRecord++;
+ 
+@@ -226,7 +234,7 @@
+     if(record < highRecord){
+       int length = highRecord - record;
+       if(length > tmpArr.length)
+-	tmpArr = new int[length];
++			tmpArr = new int[length];
+       intBuffer.position(record);
+       intBuffer.get(tmpArr, 0, length);
+       intBuffer.position(record + 1);
+@@ -234,11 +242,23 @@
+       intBuffer.put(record, value);
+       highRecord++;
+       doFailSafe(record, false, true);
++/*
++	System.out.print("--record = : ");
++	System.out.print(record);
++	System.out.print(" highrecord = : ");
++	System.out.println(highRecord);
++*/
+       return;
+     }
+     intBuffer.put(record, value);
+     highRecord++;
+     doFailSafe(record, true, true);
++/*
++	System.out.print("xxrecord = : ");
++	System.out.print(record);
++	System.out.print(" highrecord = : ");
++	System.out.println(highRecord);
++*/
+   }
+   
+   /**
+@@ -292,7 +312,7 @@
+     if(!failSafe)
+       return;
+     
+-    //OBS GLÖM INTE ATT FIXA MED STORLEKEN!!!
++    //OBS GLï¿½M INTE ATT FIXA MED STORLEKEN!!!
+     int recpos = record * 4;
+     buffer.limit((onlyRecord) ? recpos + 4 : highRecord * 4);
+     buffer.position(recpos);
+diff -urN src/com/mellowtech/collections/KeyValue.java new/com/mellowtech/collections/KeyValue.java
+--- src/com/mellowtech/collections/KeyValue.java	2013-09-04 13:44:45.151348551 -0600
++++ new/com/mellowtech/collections/KeyValue.java	2013-09-04 13:09:56.171351179 -0600
+@@ -42,9 +42,6 @@
+  * @version 1.0
+  */
+ public class KeyValue extends ByteStorable{
+-  
+-  
+-
+ 
+   private ByteStorable key;
+   private ByteStorable value;
