@@ -39,7 +39,9 @@ public class RPhase2 extends Configured implements Tool
 		}
 
 
-		public void map(LongWritable key, Text value, Context context) 	throws IOException 
+		public void map(LongWritable key, Text value, 
+		OutputCollector<IntWritable, RPhase2Value> output, 
+		Reporter reporter) 	throws IOException 
 		{
 			String line = value.toString();
 			String[] parts = line.split(" +");
