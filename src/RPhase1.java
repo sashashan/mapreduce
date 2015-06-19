@@ -18,10 +18,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.io.*;
-import org.apache.hadoop.mapreduce.*; // mapred. -> mapreduce
+import org.apache.hadoop.mapred.*; // mapred. -> mapreduce
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
-import org.apache.hadoop.mapreduce.lib.MultipleOutputs; // mapred. -> mapreduce
+import org.apache.hadoop.mapred.lib.MultipleOutputs; // mapred. -> mapreduce
 
 import de.lmu.ifi.dbs.elki.data.FloatVector;
 import de.lmu.ifi.dbs.elki.data.DoubleVector;
@@ -85,7 +85,9 @@ public class RPhase1 extends Configured implements Tool
 		/**
 		 * Partition input data sets into multiple buckets
 		 */ 
-		public void map(LongWritable key, Text value, Context context) throws IOException // -> Context replaces output and reporter
+		public void map(LongWritable key, Text value, 
+		OutputCollector<RPhase1Key, RPhase1Value> output, 
+		Reporter reporter) throws IOException 
 		{
 			String[] parts = value.toString().split(" +");	
 			String recId = parts[recIdOffset];
@@ -131,7 +133,7 @@ public class RPhase1 extends Configured implements Tool
 				RPhase1Key rp1k = new RPhase1Key(zval, recIdInt, groupID);		
 
 				//value format  <rid, coord, src>
-				context.write(rp1k, rp1v); // output.collect -> context.write
+				output.collect(rp1k, rp1v);
 			} 
 		} // map
 	} //mapper

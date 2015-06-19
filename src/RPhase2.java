@@ -38,8 +38,9 @@ public class RPhase2 extends Configured implements Tool
 			count ++;
 		}
 
-
-		public void map(LongWritable key, Text value, Context context) 	throws IOException 
+		public void map(LongWritable key, Text value, 
+		OutputCollector<IntWritable, RPhase2Value> output, 
+		Reporter reporter) 	throws IOException
 		{
 			String line = value.toString();
 			String[] parts = line.split(" +");
@@ -166,7 +167,7 @@ public class RPhase2 extends Configured implements Tool
 		conf.setMapperClass(MapClass.class);        
 		conf.setReducerClass(Reduce.class);
 	
-		int numberOfPartition = 2; // IMPORTANT TO NOT SET IT TO ZERO HERE!! - Sasha
+		int numberOfPartition = 0; // IMPORTANT TO NOT SET IT TO ZERO HERE!! - Sasha
 		List<String> other_args = new ArrayList<String>();
 		System.out.println("Greetings from Sasha!");
 
@@ -176,8 +177,6 @@ public class RPhase2 extends Configured implements Tool
 				if ("-m".equals(args[i])) {
 					//conf.setNumMapTasks(Integer.parseInt(args[++i]));
 					++i;
-				} else if ("-r".equals(args[i])) {
-					conf.setNumReduceTasks(Integer.parseInt(args[++i]));
 				} else if ("-p".equals(args[i])) {
 					numberOfPartition = Integer.parseInt(args[++i]);
 					conf.setInt("numberOfPartition", numberOfPartition);
