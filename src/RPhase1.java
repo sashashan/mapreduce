@@ -8,7 +8,7 @@
  * PROVE DEFECTIVE, YOU ASSUME THE COST OF ALL NECESSARY SERVICING, REPAIR
  * OR CORRECTION.
  */
-
+// HELLO!!
 package test;
 
 import java.io.*;
