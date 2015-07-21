@@ -1,0 +1,35 @@
+<project default="jar">
+    <!-- Hadoop configuration!! -->
+    <property name="hadoop.ver" value="2.6.0"/>
+    <property name="hadoop.dir" value="/u/qqiu/hadoop-${hadoop.ver}"/>
+    <property name="elki.dir" value="./mrknnj-release/hbrj"/>
+    <path id="hadoop.cp">
+        <fileset dir="${hadoop.dir}" includes="**/*.jar"/>
+        <fileset dir="${elki.dir}" includes="elki.jar"/>
+    </path>
+
+    <target name="clean">
+        <delete dir="build"/>
+    </target>
+
+    <target name="compile">
+        <mkdir dir="build/classes"/>
+        <javac includeantruntime="false"
+            deprecation="true"
+            srcdir="src" destdir="build/classes"
+            classpathref="hadoop.cp"/>
+    </target>
+
+    <target name="jar" depends="compile">
+        <jar destfile="build/Hadoop.jar" basedir="build/classes">
+            <zipgroupfileset dir="${elki.dir}" includes="elki.jar"/>
+        </jar>
+    </target>
+
+    <target name="print-version"> 
+        <echo>Java/JVM version: ${ant.java.version}</echo> 
+        <echo>Java/JVM detail version: ${java.version}</echo> 
+    </target>
+
+</project>
+
