@@ -1,3 +1,4 @@
 *.class
 *.sh
 build.xml
+*.jar
