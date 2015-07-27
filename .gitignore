@@ -1,3 +1,7 @@
 *.class
 *.sh
 build.xml
+mrknnj-release/hbrj/test_generator/FileTestGenerator.java
+mrknnj-release/hbrj/test_generator/FileTestGenerator.class
+build/Hadoop.jar
+mrknnj-release/hbrj/elki.jar
