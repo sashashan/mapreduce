@@ -20,7 +20,7 @@ public final class LoggingConfiguration {
   /**
    * General debug flag.
    */
-  public static boolean DEBUG = false;
+  public static boolean DEBUG = true;
 
   /**
    * Configuration file name

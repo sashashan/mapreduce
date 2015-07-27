@@ -2,3 +2,5 @@
 *.sh
 build.xml
 *.jar
+build/Hadoop.jar
+mrknnj-release/hbrj/elki.jar

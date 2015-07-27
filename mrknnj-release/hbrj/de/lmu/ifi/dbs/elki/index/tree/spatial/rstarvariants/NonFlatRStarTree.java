@@ -251,6 +251,12 @@ public abstract class NonFlatRStarTree<O extends NumberVector<O, ?>, N extends A
   public void bulkLoad(O sampleObject, String filename, int size,
   boolean sortLeafFile, int dim) throws Exception 
   {
+
+    System.out.println("###########[bulkLoad]###########    Started method");
+    if(logger.isDebugging()) {
+      System.out.println("###########[bulkLoad]###########    Hi from debugger ;)");
+    }
+
     initialize(sampleObject);
     int createdNodes = 0;
     int dimension = dim;
@@ -299,7 +305,7 @@ public abstract class NonFlatRStarTree<O extends NumberVector<O, ?>, N extends A
       tfile = new File(prefix + suffix);
       tfile.delete();
 	}
-    //System.out.println( "leafNodes: " + numNodes );
+    System.out.println( "leafNodes: " + numNodes );
     setHeight(1);
 
     // Repeatly create dirNodes 
@@ -334,7 +340,7 @@ public abstract class NonFlatRStarTree<O extends NumberVector<O, ?>, N extends A
         nodeCount++;
         numNodes++;
       }
-      // System.out.println( "pass : " + pass + " , created dirNodes: " + nodeCount );
+      System.out.println( "pass : " + pass + " , created dirNodes: " + nodeCount );
 
       tfile = new File( prefix + (pass-1) + suffix );
       tfile.delete();
@@ -344,8 +350,8 @@ public abstract class NonFlatRStarTree<O extends NumberVector<O, ?>, N extends A
     tfile = new File(prefix + pass);
     tfile.delete();
 
-    // System.out.println("numNodes: " + numNodes );
-    // System.out.println("Height of the tree is : " + getHeight());
+    System.out.println("numNodes: " + numNodes );
+    System.out.println("Height of the tree is : " + getHeight());
     getRoot().integrityCheck();
 
   } // diskBasedBL
@@ -383,6 +389,8 @@ public abstract class NonFlatRStarTree<O extends NumberVector<O, ?>, N extends A
     }
  
     public void getNextNode() throws Exception {
+
+      System.out.println("###########[getNextNode]###########    Started method");
       if (!hasNextNode()) return;
  
       // the number of records required for creating a directory node
@@ -457,7 +465,10 @@ public abstract class NonFlatRStarTree<O extends NumberVector<O, ?>, N extends A
         lfInt[i] = (int) lf[i];
  
       String zorder = Zorder.valueOf(lf.length, lfInt);
+      System.out.println("###########[getNextNode]###########    zorder value:" + lfInt[0] + " " + lfInt[1] + "to coordinate: " + zorder + ", dirNodeID" + dirNodeID);
       String line =  zorder + " " + dirNodeID;
+
+
  
       bw.write(line + "\n");  
  
