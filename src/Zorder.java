@@ -1,4 +1,4 @@
-package de.lmu.ifi.dbs.elki.index;
+//package de.lmu.ifi.dbs.elki.index;
 
 import java.io.*;
 import java.util.*;
@@ -42,10 +42,13 @@ public class Zorder {
 
 	public static int maxDecDigits( int dimension ) 
 	{
+		System.out.println("In madDecDigits");
 		int max = 32;
 		BigInteger maxDec = new BigInteger( "1" );
 		maxDec = maxDec.shiftLeft( dimension * max );
+		//System.out.println("maxDec: " + Integer.toBinaryString(maxDec));
 		maxDec.subtract( BigInteger.ONE );
+		//System.out.println("maxDec: " + Integer.toBinaryString(maxDec));
 		return maxDec.toString().length();
 	}
 
@@ -66,18 +69,18 @@ public class Zorder {
 		//System.out.println( "maxDec " + maxDec.toString() );
         int max = 32;
 		int fix = maxDecDigits(dimension); //global maximum possible zvalue length
-		//System.out.println( fix );
+		System.out.println("fix: " + fix );
 
 		for (int i = 0; i < dimension; i++) {
 			String p = Integer.toBinaryString((int)coord[i]);
-			//System.out.println( coord[i] + " " + p ); 
+			System.out.println( coord[i] + " " + p ); 
 			arrPtr.add(p);
 		}
 
 		for( int i = 0; i < arrPtr.size(); ++i ) {
 			String extra = createExtra( max - arrPtr.elementAt(i).length() ); 
 			arrPtr.set(i, extra + arrPtr.elementAt(i) );
-			//System.out.println( i + " " + arrPtr.elementAt(i) );
+			System.out.println( i + " " + arrPtr.elementAt(i) );
 		}
 	
 		char[] value = new char[dimension * max];
@@ -173,7 +176,42 @@ public class Zorder {
 		return coord;
 	}
 
-	public static void main(String[] args) {
-		// Test case
+	public static void main(String[] args) 
+	{
+		//39886296 12356.6276 27642.1062 Hawaii,?HI
+
+		int dimension = 2;
+		int coordOffset = 1;
+		String[] parts = new String [3];
+		int scale = 1000;
+
+		parts[0] = "39886296"; // ID
+		parts[1] = "12356.6276";
+		parts[2] = "27642.1062";
+
+		String recId = parts[0];
+		int recIdInt = Integer.parseInt(recId);
+		float[] coord = new float[dimension];
+
+		for (int i = 0; i < dimension; i++) {
+			coord[i] = Float.parseFloat(parts[coordOffset + i]);
+			System.out.println("Coord[i] " + coord[i]);	
+		}
+
+		int[] converted_coord = new int[dimension];
+
+		for (int i = 0; i < dimension; i++)	
+		{
+			converted_coord[i] = (int) coord[i];        // get the integer part
+			System.out.println("(integer) converted_coord[" + i + "]: " + converted_coord[i]);
+			coord[i] = coord[i] - converted_coord[i];   // get the fraction part
+			System.out.println("(fraction) coord[" + i + "]: " + coord[i]);
+			converted_coord[i] *= scale;                // scale integer part
+			System.out.println("(scaled integer) converted_coord[" + i + "]: " + converted_coord[i]);
+			converted_coord[i] += coord[i] * scale;     // scale fraction part
+			System.out.println("(scaled fraction) converted_coord[" + i + "]: " + converted_coord[i]);
+		}
+		
+		String zval = Zorder.valueOf(dimension, converted_coord); 
 	}
 }
