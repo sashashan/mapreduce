@@ -1,4 +1,6 @@
 *.class
 *.sh
 build.xml
-*.jar
+mrknnj-release/hbrj/Makefile
+mrknnj-release/hbrj/elki.jar
+build/Hadoop.jar
