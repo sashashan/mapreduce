@@ -9,61 +9,71 @@ public class FileTestGenerator {
 	
 	public static void main(String[] args) {
 
+		String file_output_path = "/Users/aleksandrashanina/mapreduce/mrknnj-release/hbrj/input2/50000000_inner.txt"; 
 		int million = 1000000;
 		int billion = 1000*million;
-		int lineCount = 50*million; // 50 million
+		int lineBlock = million;
+		int totalLineCount = 50; // multiple of lineBlock of lines to write to a file
 		int idCount = 0; 
 		String filler = "Siskiyou,?CA";
-		StringBuilder sb = new StringBuilder();
+		StringBuilder sb;
 		int upperBound = 1000000000; // last 4 0s are for dp.
-		String output_file = "/Users/aleksandrashanina/mapreduce/mrknnj-release/hbrj/input2/50000000_inner.txt";
+		BufferedWriter bw;
 
 		Random r = new Random();
 		Random r2 = new Random();
 
-		for (int i = 0; i < lineCount; i ++) {
-			sb.append(idCount); //id
-			sb.append(" ");
-			int rand = r.nextInt(upperBound);
-			double fixed = (double) rand / 10000; 
-			//System.out.println(fixed);
-			sb.append(fixed); // x coord
-			sb.append(" ");
-			int rand2 = r2.nextInt(upperBound);
-			double fixed2 = (double) rand2 / 10000; 
-			//System.out.println(fixed2);
-			sb.append(fixed2); // x coord
-			sb.append(" ");
-			sb.append(filler);
-			sb.append("\n");
-			idCount++;
-		}
-		
-		System.out.println("StringBuilder done");
-
+		// Creating a file 
 		try {
- 
-			String content = "This is the content to write into file";
- 
-			File file = new File(output_file);
- 
+			File file = new File(file_output_path);
+			FileWriter fw = new FileWriter(file.getAbsoluteFile());
+			bw = new BufferedWriter(fw);
+
 			// if file doesnt exists, then create it
 			if (!file.exists()) {
 				file.createNewFile();
 			}
- 
-			FileWriter fw = new FileWriter(file.getAbsoluteFile());
-			BufferedWriter bw = new BufferedWriter(fw);
-			bw.append(sb);
-			bw.close();
- 
+
+			// Writing multiples of lineBlock to a file
+
+			for (int j = 0; j < totalLineCount; j++) {
+				sb = new StringBuilder();
+				for (int i = 0; i < lineBlock; i ++) {
+					sb.append(idCount); //id
+					sb.append(" ");
+					int rand = r.nextInt(upperBound);
+					double fixed = (double) rand / 10000; 
+					//System.out.println(fixed);
+					sb.append(fixed); // x coord
+					sb.append(" ");
+					int rand2 = r2.nextInt(upperBound);
+					double fixed2 = (double) rand2 / 10000; 
+					//System.out.println(fixed2);
+					sb.append(fixed2); // x coord
+					sb.append(" ");
+					sb.append(filler);
+					sb.append("\n");
+					idCount++;
+				}
+				
+				System.out.println("StringBuilder done");
+
+				bw.append(sb);
+			}
+
 			System.out.println("Done");
- 
+
+			
+			bw.close();
+			
+	 
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
 
+		
+			
 
 
-	}
+	} // end main
 }
